@@ -44,10 +44,15 @@ run() { if command -v taskset >/dev/null 2>&1; then taskset -c 2-23 nice -n 19 "
 [[ -d $headers/share/cmake/tsl-robin-map ]] || { echo "No header-only packages in $headers" >&2; exit 1; }
 mkdir -p "$out"
 ndk_cmake=(-DCMAKE_TOOLCHAIN_FILE="$toolchain" -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$api -DANDROID_STL=c++_shared)
+# Speed: reuse compiled objects between builds (the CI cache keeps ~/.cache/ccache).
+ccache_cmake=()
+if command -v ccache >/dev/null 2>&1; then
+    ccache_cmake=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 
 # FEX：无 glibc jemalloc hook（仅 glibc；它服务于 thunks，本构建不用）。
 if [[ ! -f $out/fex/build.ninja ]]; then
-    cmake -S third_party/FEX -B "$out/fex" -G Ninja "${ndk_cmake[@]}" \
+    cmake -S third_party/FEX -B "$out/fex" -G Ninja "${ndk_cmake[@]}" ${ccache_cmake[@]+"${ccache_cmake[@]}"} \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_FEX_INCLUDE="$PWD/cpu/fex_project.cmake" \
         -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF -DBUILD_STEAM_SUPPORT=OFF \
         -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_ZYDIS=OFF -DTUNE_ARCH=armv8.2-a -DTUNE_CPU=generic \
@@ -91,7 +96,7 @@ fi
 # （robin-map/VMA/Boost）已通过下面显式 *_DIR 提供，无需搜索整个 conda 环境。
 # 注意：注释必须放在命令外，不能插在 cmake 多行参数中间（# 会截断后续参数）。
 if [[ ! -f $out/gpu/build.ninja ]]; then
-    cmake -S gpu -B "$out/gpu" -G Ninja "${ndk_cmake[@]}" \
+    cmake -S gpu -B "$out/gpu" -G Ninja "${ndk_cmake[@]}" ${ccache_cmake[@]+"${ccache_cmake[@]}"} \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGOW3_PGO=off -DGOW3_LTO=OFF \
         "-DCMAKE_FIND_ROOT_PATH=$prefix" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH \
         -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
