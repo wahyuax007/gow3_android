@@ -45,14 +45,17 @@ run() { if command -v taskset >/dev/null 2>&1; then taskset -c 2-23 nice -n 19 "
 mkdir -p "$out"
 ndk_cmake=(-DCMAKE_TOOLCHAIN_FILE="$toolchain" -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$api -DANDROID_STL=c++_shared)
 # Speed: reuse compiled objects between builds (the CI cache keeps ~/.cache/ccache).
+# FEX already enables ccache by itself, so only the GPU build gets the launcher (absolute path:
+# ccache is not always on PATH while ninja runs).
 ccache_cmake=()
-if command -v ccache >/dev/null 2>&1; then
-    ccache_cmake=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+ccache_bin=$(command -v ccache || true)
+if [[ -n $ccache_bin ]]; then
+    ccache_cmake=(-DCMAKE_C_COMPILER_LAUNCHER="$ccache_bin" -DCMAKE_CXX_COMPILER_LAUNCHER="$ccache_bin")
 fi
 
 # FEX：无 glibc jemalloc hook（仅 glibc；它服务于 thunks，本构建不用）。
 if [[ ! -f $out/fex/build.ninja ]]; then
-    cmake -S third_party/FEX -B "$out/fex" -G Ninja "${ndk_cmake[@]}" ${ccache_cmake[@]+"${ccache_cmake[@]}"} \
+    cmake -S third_party/FEX -B "$out/fex" -G Ninja "${ndk_cmake[@]}" \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_FEX_INCLUDE="$PWD/cpu/fex_project.cmake" \
         -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF -DBUILD_STEAM_SUPPORT=OFF \
         -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_ZYDIS=OFF -DTUNE_ARCH=armv8.2-a -DTUNE_CPU=generic \
