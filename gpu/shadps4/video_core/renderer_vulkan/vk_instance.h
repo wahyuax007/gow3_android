@@ -169,6 +169,24 @@ public:
         return custom_border_color;
     }
 
+    /// Mali: false when VK_EXT_robustness2 nullDescriptor is missing.
+    bool IsNullDescriptorSupported() const {
+        return null_descriptor;
+    }
+
+    /// Mali: valid stand-ins for descriptors that would be VK_NULL_HANDLE (empty when the driver
+    /// supports nullDescriptor, so Adreno behaviour is unchanged).
+    vk::Buffer GetNullBuffer() const {
+        return null_descriptor ? vk::Buffer{} : null_buffer;
+    }
+    vk::ImageView GetNullImageView() const {
+        return null_descriptor ? vk::ImageView{} : null_image_view;
+    }
+
+    bool IsFillModeNonSolidSupported() const {
+        return features.fillModeNonSolid;
+    }
+
     /// Returns true when VK_EXT_shader_stencil_export is supported
     bool IsShaderStencilExportSupported() const {
         return shader_stencil_export;
@@ -527,6 +545,9 @@ private:
     /// Creates the VMA allocator handle
     void CreateAllocator();
 
+    /// Mali: creates the dummy buffer/image used instead of null descriptors.
+    void CreateNullResources();
+
     /// Collects various information from the device.
     void CollectDeviceParameters();
     void CollectPhysicalMemoryInfo();
@@ -570,6 +591,12 @@ private:
     TracyVkCtx profiler_context{};
     u32 queue_family_index{0};
     bool custom_border_color{};
+    bool null_descriptor{};
+    vk::Buffer null_buffer{};
+    void* null_buffer_alloc{};
+    vk::Image null_image{};
+    void* null_image_alloc{};
+    vk::ImageView null_image_view{};
     bool fragment_shader_barycentric{};
     bool amd_shader_explicit_vertex_parameter{};
     bool depth_clip_control{};

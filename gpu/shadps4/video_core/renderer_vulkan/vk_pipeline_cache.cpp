@@ -6,6 +6,9 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <vector>
 #include <mutex>
 #include <ranges>
 #include <string>
@@ -320,6 +323,55 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
     return info;
 }
 
+namespace {
+std::filesystem::path DriverPipelineCachePath(const Instance& instance) {
+    using namespace Common::FS;
+    const auto props = instance.GetPhysicalDevice().getProperties();
+    std::string name = "vk_driver_cache_";
+    for (u32 i = 0; i < VK_UUID_SIZE; ++i) {
+        name += fmt::format("{:02x}", props.pipelineCacheUUID[i]);
+    }
+    return GetUserPath(PathType::ShaderDir) / (name + ".bin");
+}
+
+std::vector<u8> LoadDriverPipelineCache(const Instance& instance) {
+    std::vector<u8> data;
+    try {
+        std::ifstream file(DriverPipelineCachePath(instance), std::ios::binary | std::ios::ate);
+        if (file) {
+            data.resize(static_cast<size_t>(file.tellg()));
+            file.seekg(0);
+            file.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+            if (!file) {
+                data.clear();
+            }
+        }
+    } catch (...) {
+        data.clear();
+    }
+    return data;
+}
+
+void SaveDriverPipelineCache(const Instance& instance, vk::PipelineCache cache) {
+    try {
+        const auto [result, data] = instance.GetDevice().getPipelineCacheData(cache);
+        if (result != vk::Result::eSuccess || data.empty()) {
+            return;
+        }
+        const auto path = DriverPipelineCachePath(instance);
+        std::filesystem::create_directories(path.parent_path());
+        const auto tmp = std::filesystem::path(path).concat(".tmp");
+        {
+            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+            file.write(reinterpret_cast<const char*>(data.data()),
+                       static_cast<std::streamsize>(data.size()));
+        }
+        std::filesystem::rename(tmp, path);
+    } catch (...) {
+    }
+}
+} // namespace
+
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
     : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
@@ -385,11 +437,17 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                               instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
-        .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
+        .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+                                         !instance.IsShaderClipDistanceSupported(),
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
     };
 
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
+    // Mali: no VK_KHR_pipeline_binary, so persist the driver's own cache between launches.
+    const auto saved_cache = LoadDriverPipelineCache(instance);
+    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique(
+        vk::PipelineCacheCreateInfo{.initialDataSize = saved_cache.size(),
+                                    .pInitialData = saved_cache.empty() ? nullptr
+                                                                        : saved_cache.data()});
     ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
                vk::to_string(cache_result));
     pipeline_cache = std::move(cache);
@@ -631,6 +689,7 @@ void PipelineCache::FinishCompilations() {
             LOG_ERROR(Render_Vulkan, "gow3: compiler cache merge failed: {}", vk::to_string(result));
         }
     }
+    SaveDriverPipelineCache(instance, *pipeline_cache);
 }
 
 bool PipelineCache::AsyncCompilation() const {

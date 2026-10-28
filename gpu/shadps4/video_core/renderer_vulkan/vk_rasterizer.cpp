@@ -1901,10 +1901,14 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
             host_offsets.push_back(host_buffer_info->offset + buffer.base_address -
                                    host_buffer_info->base_address);
         } else {
-            host_buffers.emplace_back(VK_NULL_HANDLE);
+            host_buffers.emplace_back(instance.GetNullBuffer());
             host_offsets.push_back(0);
         }
-        host_sizes.push_back(buffer.GetSize());
+        // Mali: a dummy buffer is smaller than the stream, so bind it whole.
+        host_sizes.push_back(buffer.base_address == 0 || buffer.GetSize() == 0
+                                 ? (instance.IsNullDescriptorSupported() ? buffer.GetSize()
+                                                                         : u64(VK_WHOLE_SIZE))
+                                 : buffer.GetSize());
         host_strides.push_back(buffer.GetStride());
     }
 
@@ -2147,7 +2151,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 // Permutations compiled without enabled planes never read the buffer, so the
                 // declared binding is satisfied with a null descriptor instead of a copy.
                 if (Regs().clipper_control.user_clip_plane_enable == 0) {
-                    buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
+                    buffer_infos.emplace_back(instance.GetNullBuffer(), 0, VK_WHOLE_SIZE);
                 } else {
                     auto& vk_buffer = buffer_cache.GetStreamBuffer();
                     std::array<float, AmdGpu::NUM_CLIP_PLANES * 4> planes{};
@@ -2205,7 +2209,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                                      memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize()));
             }
             if (vsharp.base_address == 0 || vsharp.GetSize() == 0) {
-                buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
+                buffer_infos.emplace_back(instance.GetNullBuffer(), 0, VK_WHOLE_SIZE);
             } else {
                 const u64 size = memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize());
                 if (size != vsharp.GetSize()) {
@@ -2453,7 +2457,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         const auto& desc = *desc_ptr;
         bool is_storage = desc.type == VideoCore::TextureCache::BindingType::Storage;
         if (!image_id) {
-            image_infos.emplace_back(VK_NULL_HANDLE, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
+            image_infos.emplace_back(VK_NULL_HANDLE, instance.GetNullImageView(), vk::ImageLayout::eGeneral);
         } else {
             if (auto& old_image = texture_cache.GetImage(image_id);
                 old_image.binding.needs_rebind) {
@@ -2677,7 +2681,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     for (u32 i = 0; i < count; ++i) {
         const auto& entry = set.entries[i];
         if (!entry.id) {
-            image_infos.emplace_back(VK_NULL_HANDLE, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
+            image_infos.emplace_back(VK_NULL_HANDLE, instance.GetNullImageView(), vk::ImageLayout::eGeneral);
             continue;
         }
         texture_cache.MarkFound(entry.id);

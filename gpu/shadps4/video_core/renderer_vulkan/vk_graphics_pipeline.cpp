@@ -114,7 +114,9 @@ GraphicsPipeline::GraphicsPipeline(
             .depthClampEnable = key.depth_clamp_enable &&
                                 (!key.depth_clip_enable || instance.IsDepthClipEnableSupported()),
             .rasterizerDiscardEnable = false,
-            .polygonMode = LiverpoolToVK::PolygonMode(key.polygon_mode),
+            .polygonMode = instance.IsFillModeNonSolidSupported()
+                               ? LiverpoolToVK::PolygonMode(key.polygon_mode)
+                               : vk::PolygonMode::eFill,
             .lineWidth = 1.0f,
         },
         vk::PipelineRasterizationProvokingVertexStateCreateInfoEXT{

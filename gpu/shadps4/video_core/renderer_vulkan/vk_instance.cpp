@@ -187,6 +187,17 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 
 Instance::~Instance() {
     ImGui::Core::Shutdown(GetDevice());
+    if (null_image_view) {
+        GetDevice().destroyImageView(null_image_view);
+    }
+    if (null_image) {
+        vmaDestroyImage(allocator, static_cast<VkImage>(null_image),
+                        static_cast<VmaAllocation>(null_image_alloc));
+    }
+    if (null_buffer) {
+        vmaDestroyBuffer(allocator, static_cast<VkBuffer>(null_buffer),
+                         static_cast<VmaAllocation>(null_buffer_alloc));
+    }
     vmaDestroyAllocator(allocator);
 }
 
@@ -267,19 +278,27 @@ bool Instance::CreateDevice() {
 #endif
     ASSERT_MSG(add_extension(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME),
                "Required Vulkan extension unavailable: {}", VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-    ASSERT_MSG(add_extension(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME),
+    // Mali: driver Arm hanya mengekspos versi KHR dari ekstensi ini (EXT tidak ada).
+    ASSERT_MSG(add_extension(VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME) ||
+                   add_extension("VK_KHR_vertex_attribute_divisor"),
                "Required Vulkan extension unavailable: {}",
                VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
-    ASSERT_MSG(add_extension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME),
-               "Required Vulkan extension unavailable: {}", VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
-
-    const auto robustness2_features = feature_chain.get<vk::PhysicalDeviceRobustness2FeaturesEXT>();
-    ASSERT_MSG(robustness2_features.robustBufferAccess2,
-               "Required Vulkan feature unavailable: robustBufferAccess2");
-    ASSERT_MSG(robustness2_features.robustImageAccess2,
-               "Required Vulkan feature unavailable: robustImageAccess2");
-    ASSERT_MSG(robustness2_features.nullDescriptor,
-               "Required Vulkan feature unavailable: nullDescriptor");
+    // Mali: VK_EXT_robustness2 tidak ada, jadi tidak boleh jadi syarat wajib.
+    const bool robustness2 = add_extension(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    null_descriptor = robustness2;
+    if (robustness2) {
+        const auto robustness2_features =
+            feature_chain.get<vk::PhysicalDeviceRobustness2FeaturesEXT>();
+        ASSERT_MSG(robustness2_features.robustBufferAccess2,
+                   "Required Vulkan feature unavailable: robustBufferAccess2");
+        ASSERT_MSG(robustness2_features.robustImageAccess2,
+                   "Required Vulkan feature unavailable: robustImageAccess2");
+        ASSERT_MSG(robustness2_features.nullDescriptor,
+                   "Required Vulkan feature unavailable: nullDescriptor");
+    } else {
+        LOG_WARNING(Render_Vulkan,
+                    "VK_EXT_robustness2 unavailable (Mali): nullDescriptor is not supported");
+    }
 
 #ifdef __ANDROID__
     // Bionic 的 swapchain 是 vk_swapchain_ahb.h（VkSwapchainKHR 在直连加载的 Android 驱动上不
@@ -636,6 +655,9 @@ bool Instance::CreateDevice() {
         },
     };
 
+    if (!robustness2) {
+        device_chain.unlink<vk::PhysicalDeviceRobustness2FeaturesEXT>();
+    }
     if (!custom_border_color) {
         device_chain.unlink<vk::PhysicalDeviceCustomBorderColorFeaturesEXT>();
     }
@@ -769,7 +791,112 @@ bool Instance::CreateDevice() {
     }
 
     CreateAllocator();
+    CreateNullResources();
     return true;
+}
+
+void Instance::CreateNullResources() {
+    if (null_descriptor) {
+        return;
+    }
+    const auto dev = *device;
+    const VmaAllocationCreateInfo alloc_ci = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+
+    const VkBufferCreateInfo buffer_ci = static_cast<VkBufferCreateInfo>(vk::BufferCreateInfo{
+        .size = 65536,
+        .usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer |
+                 vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eIndexBuffer |
+                 vk::BufferUsageFlagBits::eUniformTexelBuffer |
+                 vk::BufferUsageFlagBits::eStorageTexelBuffer |
+                 vk::BufferUsageFlagBits::eTransferDst,
+        .sharingMode = vk::SharingMode::eExclusive,
+    });
+    VkBuffer raw_buffer{};
+    VmaAllocation buffer_alloc{};
+    if (vmaCreateBuffer(allocator, &buffer_ci, &alloc_ci, &raw_buffer, &buffer_alloc, nullptr) !=
+        VK_SUCCESS) {
+        LOG_ERROR(Render_Vulkan, "Mali: failed to create the null buffer");
+        return;
+    }
+    null_buffer = vk::Buffer{raw_buffer};
+    null_buffer_alloc = buffer_alloc;
+
+    const VkImageCreateInfo image_ci = static_cast<VkImageCreateInfo>(vk::ImageCreateInfo{
+        .imageType = vk::ImageType::e2D,
+        .format = vk::Format::eR8G8B8A8Unorm,
+        .extent = {1, 1, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = vk::SampleCountFlagBits::e1,
+        .tiling = vk::ImageTiling::eOptimal,
+        .usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
+                 vk::ImageUsageFlagBits::eTransferDst,
+        .sharingMode = vk::SharingMode::eExclusive,
+        .initialLayout = vk::ImageLayout::eUndefined,
+    });
+    VkImage raw_image{};
+    VmaAllocation image_alloc{};
+    if (vmaCreateImage(allocator, &image_ci, &alloc_ci, &raw_image, &image_alloc, nullptr) !=
+        VK_SUCCESS) {
+        LOG_ERROR(Render_Vulkan, "Mali: failed to create the null image");
+        return;
+    }
+    null_image = vk::Image{raw_image};
+    null_image_alloc = image_alloc;
+
+    const auto [view_result, view] = dev.createImageView(vk::ImageViewCreateInfo{
+        .image = null_image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR8G8B8A8Unorm,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    });
+    if (view_result != vk::Result::eSuccess) {
+        LOG_ERROR(Render_Vulkan, "Mali: failed to create the null image view");
+        return;
+    }
+    null_image_view = view;
+
+    // One-time init: zero the buffer and put the image in General (the layout the rasterizer
+    // writes into null image descriptors).
+    const auto [pool_result, pool] = dev.createCommandPoolUnique(vk::CommandPoolCreateInfo{
+        .flags = vk::CommandPoolCreateFlagBits::eTransient,
+        .queueFamilyIndex = queue_family_index,
+    });
+    if (pool_result != vk::Result::eSuccess) {
+        return;
+    }
+    const auto [cmd_result, cmds] = dev.allocateCommandBuffers(vk::CommandBufferAllocateInfo{
+        .commandPool = *pool,
+        .level = vk::CommandBufferLevel::ePrimary,
+        .commandBufferCount = 1,
+    });
+    if (cmd_result != vk::Result::eSuccess || cmds.empty()) {
+        return;
+    }
+    const vk::CommandBuffer cmd = cmds[0];
+    static_cast<void>(
+        cmd.begin(vk::CommandBufferBeginInfo{.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
+    const vk::ImageMemoryBarrier to_general = {
+        .srcAccessMask = {},
+        .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eGeneral,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = null_image,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    };
+    cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eTransfer,
+                        {}, {}, {}, to_general);
+    cmd.fillBuffer(null_buffer, 0, VK_WHOLE_SIZE, 0);
+    const vk::ClearColorValue clear_color{std::array<float, 4>{0.f, 0.f, 0.f, 0.f}};
+    const vk::ImageSubresourceRange range = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    cmd.clearColorImage(null_image, vk::ImageLayout::eGeneral, clear_color, range);
+    static_cast<void>(cmd.end());
+    const vk::SubmitInfo submit = {.commandBufferCount = 1, .pCommandBuffers = &cmd};
+    static_cast<void>(graphics_queue.submit(submit));
+    static_cast<void>(graphics_queue.waitIdle());
+    LOG_INFO(Render_Vulkan, "Mali: null buffer/image fallback created (no nullDescriptor)");
 }
 
 void Instance::CreateAllocator() {
