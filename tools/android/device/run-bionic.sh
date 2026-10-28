@@ -165,6 +165,12 @@ case $gpu_driver in
            echo "GPU driver $gpu_driver is gone: automatic choice"; gpu_auto=1; gpu_driver=
        fi ;;
 esac
+# Mali port: Turnip/adrenotools packs only work on Adreno (kgsl). On Mali always use the phone's
+# stock Vulkan driver, whatever gow3.ini says.
+if [ -e /dev/mali0 ] || [ -e /dev/mali ]; then
+    [ -z "$gpu_driver" ] || echo "Mali GPU: ignoring gpu_driver=$gpu_driver"
+    gpu_driver=
+fi
 unset GOW3_VULKAN_DRIVER
 if [ -n "$gpu_driver" ]; then
     driver_lib=$(cat "$files/drivers/$gpu_driver/driver.lib" 2>/dev/null || true)

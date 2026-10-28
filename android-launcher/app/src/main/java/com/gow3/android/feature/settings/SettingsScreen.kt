@@ -6,6 +6,7 @@ import com.gow3.android.core.settings.GamePrefs
 import com.gow3.android.core.settings.Gow3Settings
 import com.gow3.android.data.CatalogProblem
 import com.gow3.android.data.Gow3Data
+import com.gow3.android.data.model.DeviceInfo
 import com.gow3.android.data.model.GameIdentity
 import com.gow3.android.data.model.GameIdentityState
 import com.gow3.android.data.model.LaunchCategory
@@ -167,7 +168,7 @@ internal fun SettingsScreen(
                         is SettingsEntry.Param -> ParamRow(entry.param, iniValues, ::save)
                         is SettingsEntry.Card -> {
                             // 功能卡 slot：内容由对应功能的 change 注册（design D2）。
-                            if (entry.slotId == "driver_manager") {
+                            if (entry.slotId == "driver_manager" && !DeviceInfo.isMali()) {
                                 DriverManagerCard(
                                     ini = iniValues,
                                     hasGameDir = gameDir != null,

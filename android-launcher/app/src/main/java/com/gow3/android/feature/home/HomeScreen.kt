@@ -10,6 +10,7 @@ import com.gow3.android.data.Gow3Data
 import com.gow3.android.data.archive.SaveArchive
 import com.gow3.android.data.driver.DriverEntry
 import com.gow3.android.data.driver.DriverManager
+import com.gow3.android.data.model.DeviceInfo
 import com.gow3.android.data.model.GameIdentity
 import com.gow3.android.data.model.GameIdentityState
 import com.gow3.android.data.model.MobilePreset
@@ -171,6 +172,20 @@ internal fun HomeScreen(
         saveUpdates(MobilePresets.updates(preset, catalog, loadIni(context)))
     }
 
+    // Mali port: the GPU is the bottleneck on Mali (tile-based, ~24 fps at native resolution in
+    // comparable emulators), so apply the lighter "720p" preset (render resolution 720p plus the
+    // six GPU-heavy effect patches off) once, on first launch. The player can change it freely
+    // afterwards; the marker stops us from overriding their choice.
+    LaunchedEffect(identity) {
+        if (!DeviceInfo.isMali() || prefs.raw.getBoolean("mali_preset_applied", false)) return@LaunchedEffect
+        val catalog = (identity as? GameIdentityState.Ready)?.catalog ?: return@LaunchedEffect
+        val preset = MobilePresets.available(catalog).firstOrNull { it.resolution == "720p" }
+            ?: return@LaunchedEffect
+        if (saveUpdates(MobilePresets.updates(preset, catalog, loadIni(context)))) {
+            prefs.raw.edit().putBoolean("mali_preset_applied", true).apply()
+        }
+    }
+
     // 跳过动画快捷开关与预设共用同一份目录解析；目录未就绪时开关自身置灰。
     val homeCatalog = (identity as? GameIdentityState.Ready)?.catalog
 
@@ -219,16 +234,18 @@ internal fun HomeScreen(
             ) {
                 UserSavesZone(hasSaves)
                 PresetSegmented(identity, iniValues, ::applyPreset)
-                DriverSelector(
-                    identity, iniValues, driverEntries,
-                    // 面板只回传 id：展示名从扫描结果解析（系统驱动回退到本地化文案）。
-                    onSelect = { id ->
-                        val name = id?.let { picked -> driverEntries.firstOrNull { it.id == picked }?.name }
-                            ?: systemDriverName
-                        selectDriver(id, name)
-                    },
-                    onManageDrivers,
-                )
+                if (!DeviceInfo.isMali()) {
+                    DriverSelector(
+                        identity, iniValues, driverEntries,
+                        // 面板只回传 id：展示名从扫描结果解析（系统驱动回退到本地化文案）。
+                        onSelect = { id ->
+                            val name = id?.let { picked -> driverEntries.firstOrNull { it.id == picked }?.name }
+                                ?: systemDriverName
+                            selectDriver(id, name)
+                        },
+                        onManageDrivers,
+                    )
+                }
                 FpsLimitRow(iniValues) { saveUpdates(mapOf("fps_limit" to it)) }
                 SkipAnimationsCard(homeCatalog, iniValues, ::saveUpdates)
                 // gow3port: LSFG 运行时能力已废除（Bionic 迁移，见 openspec change
@@ -242,16 +259,18 @@ internal fun HomeScreen(
             Spacer(Modifier.height(28.dp))
             GameIdentityCard(identity, onOpenStorageCategory)
             PresetSegmented(identity, iniValues, ::applyPreset)
-            DriverSelector(
-                identity, iniValues, driverEntries,
-                // 面板只回传 id：展示名从扫描结果解析（系统驱动回退到本地化文案）。
-                onSelect = { id ->
-                    val name = id?.let { picked -> driverEntries.firstOrNull { it.id == picked }?.name }
-                        ?: systemDriverName
-                    selectDriver(id, name)
-                },
-                onManageDrivers,
-            )
+            if (!DeviceInfo.isMali()) {
+                DriverSelector(
+                    identity, iniValues, driverEntries,
+                    // 面板只回传 id：展示名从扫描结果解析（系统驱动回退到本地化文案）。
+                    onSelect = { id ->
+                        val name = id?.let { picked -> driverEntries.firstOrNull { it.id == picked }?.name }
+                            ?: systemDriverName
+                        selectDriver(id, name)
+                    },
+                    onManageDrivers,
+                )
+            }
             FpsLimitRow(iniValues) { saveUpdates(mapOf("fps_limit" to it)) }
             SkipAnimationsCard(homeCatalog, iniValues, ::saveUpdates)
             Spacer(Modifier.height(6.dp))

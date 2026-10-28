@@ -878,6 +878,17 @@ void Instance::CollectImageFormatInfo() {
     LOG_INFO(Render_Vulkan, "Block Texel View support: {}",
              supports_block_texel_view ? "Yes" : "No");
 
+    // Mali diagnostics: one summary line so exported logs show at a glance what the GPU lacks.
+    LOG_INFO(Render_Vulkan,
+             "GPU_Diag: device={} driver={} bc={} astc_ldr={} clip={} cull={} fillNonSolid={} "
+             "depthBounds={}",
+             properties.deviceName.data(), vk::to_string(driver_id),
+             static_cast<bool>(features.textureCompressionBC),
+             static_cast<bool>(features.textureCompressionASTC_LDR),
+             static_cast<bool>(features.shaderClipDistance),
+             static_cast<bool>(features.shaderCullDistance),
+             static_cast<bool>(features.fillModeNonSolid), static_cast<bool>(features.depthBounds));
+
     // Check and log format support details.
     for (const auto& format : LiverpoolToVK::SurfaceFormats()) {
         if (!IsFormatSupported(format.vk_format, format.flags)) {

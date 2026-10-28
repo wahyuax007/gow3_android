@@ -34,6 +34,19 @@ internal object DeviceInfo {
         return s.toString()
     }
 
+    /**
+     * Mali port: true on Mali devices (e.g. MediaTek Dimensity). Adreno (kgsl) always wins;
+     * Mali is detected via /dev/mali0 or the SoC manufacturer. Never throws.
+     */
+    fun isMali(): Boolean = try {
+        !File("/dev/kgsl-3d0").exists() && (
+            File("/dev/mali0").exists() || File("/dev/mali").exists() ||
+                (Build.VERSION.SDK_INT >= 31 && Build.SOC_MANUFACTURER.equals("MediaTek", ignoreCase = true))
+            )
+    } catch (_: Exception) {
+        false
+    }
+
     private fun line(s: StringBuilder, key: String, value: String) {
         s.append(key).append(": ").append(value).append('\n')
     }
