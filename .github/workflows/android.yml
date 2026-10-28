@@ -47,6 +47,8 @@ jobs:
     permissions:
       contents: read
     env:
+      CCACHE_MAXSIZE: 3G
+      CCACHE_COMPRESS: '1'
       # 签名双路径：配置了 4 个 secrets 时还原正式 keystore 签名；未配置时
       # build_release_apk.sh 自动生成本地 dev key 签名（产物定位为 development APK）。
       GOW3_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -115,7 +117,7 @@ jobs:
             .local-deps/android/m2
             .local-deps/android/steam-libs
             ~/.cache/ccache
-          key: android-${{ runner.os }}-${{ hashFiles('tools/android/**', 'cpu/**', 'gpu/CMakeLists.txt', 'gpu/third_party/**', 'ci/**') }}
+          key: android-${{ runner.os }}-${{ hashFiles('tools/android/**', 'cpu/**', 'gpu/CMakeLists.txt', 'gpu/third_party/**', 'ci/**') }}-${{ github.sha }}
           restore-keys: android-${{ runner.os }}-
 
       - name: Build pinned host dependencies
